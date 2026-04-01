@@ -1,21 +1,32 @@
 # inference.py
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from pydantic import BaseModel
 import random
 import os
 import time
 
-# Optional: Uncomment if you want LLM fallback
-# from openai import OpenAI
+# Optional: only if you want LLM fallback
+try:
+    from openai import OpenAI
+    API_KEY = os.getenv("HF_TOKEN")
+    API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+    MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
+    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+    LLM_ENABLED = True
+except:
+    LLM_ENABLED = False
 
-app = FastAPI(title="RO Support OpenEnv + Planner")
+app = FastAPI(title="RO Support OpenEnv")
 
 # -----------------------
-# Internal Env State
+# Models
 # -----------------------
 class ROAction(BaseModel):
     action: str
 
+# -----------------------
+# Environment State
+# -----------------------
 state = {"issue": None, "step_count": 0, "last_action": None}
 
 # -----------------------
@@ -37,7 +48,7 @@ valid_actions = list(cost_map.keys())
 # Logging
 # -----------------------
 def log_start(task):
-    print(f"[START] task={task} issue={state['issue']}")
+    print(f"[START] task={task} env=ro_support_env")
 
 def log_step(step, action, reward, done, reason, cost):
     print(f"[STEP] step={step} action={action} reward={reward:.2f} cost={cost} done={str(done).lower()} reason={reason}")
@@ -47,7 +58,7 @@ def log_end(success, steps, rewards, total_cost):
     print(f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str} total_cost={total_cost}")
 
 # -----------------------
-# Rule-Based Actions
+# Rule-Based Decisions
 # -----------------------
 def rule_based_action(issue, action_history):
     if issue == "bad taste":
@@ -63,23 +74,20 @@ def rule_based_action(issue, action_history):
     return None
 
 # -----------------------
-# LLM Planner (Optional)
+# LLM Fallback Planner
 # -----------------------
-# Uncomment if you want OpenAI fallback
-"""
-API_KEY = os.getenv("HF_TOKEN")
-MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
-client = OpenAI(api_key=API_KEY)
+def get_best_action(state_local, action_history, reward_memory):
+    if not LLM_ENABLED:
+        return random.choice(valid_actions), "LLM disabled fallback"
 
-def get_best_action(state, action_history, reward_memory):
     for _ in range(2):
         try:
             response = client.chat.completions.create(
                 model=MODEL_NAME,
                 messages=[{
                     "role": "user",
-                    "content": f\"\"\"
-Customer issue: {state['issue']}
+                    "content": f"""
+Customer issue: {state_local['issue']}
 Previous actions: {action_history}
 
 Choose best action from:
@@ -88,12 +96,13 @@ Choose best action from:
 Format:
 action: <action>
 reason: <short reason>
-\"\"\"
+"""
                 }],
                 max_tokens=80
             )
 
             reply = response.choices[0].message.content.lower()
+
             action_line = [l for l in reply.split("\n") if "action:" in l][0]
             reason_line = [l for l in reply.split("\n") if "reason:" in l][0]
 
@@ -107,7 +116,6 @@ reason: <short reason>
             time.sleep(1)
 
     return "check_filter", "fallback"
-"""
 
 # -----------------------
 # Avoid Bad Actions
@@ -118,7 +126,7 @@ def avoid_bad_actions(action, reward_memory):
     return action
 
 # -----------------------
-# Environment API
+# API Endpoints
 # -----------------------
 @app.post("/reset")
 async def reset():
@@ -134,38 +142,69 @@ async def reset():
 async def step(action: ROAction):
     global state
     state["step_count"] += 1
-
-    # Initialize logs and memory
     action_history = [state.get("last_action")] if state.get("last_action") else []
-    reward_memory = {}
-
-    # -----------------------
-    # Rule-based first
-    # -----------------------
     chosen_action = rule_based_action(state["issue"], action_history)
-    if chosen_action:
-        reason = "Rule-based decision"
-    else:
-        # Uncomment below for LLM fallback
-        # chosen_action, reason = get_best_action(state, action_history, reward_memory)
+    if not chosen_action:
         chosen_action = action.action
-        reason = "Fallback / user action"
 
-    # Avoid bad actions
-    chosen_action = avoid_bad_actions(chosen_action, reward_memory)
+    chosen_action = avoid_bad_actions(chosen_action, {})
 
     state["last_action"] = chosen_action
-
-    # Reward calculation (example)
     reward = 1.0 if chosen_action != "check_filter" else 0.5
-    reward_memory[chosen_action] = reward
-    cost = cost_map.get(chosen_action, 0)
     done = state["step_count"] >= 6
 
-    # Logging
-    log_step(state["step_count"], chosen_action, reward, done, reason, cost)
-
     return {"state": state, "reward": reward, "done": done, "info": {}}
+
+@app.post("/run_task")
+async def run_task(task: str):
+    log_start(task)
+    global state
+    state = {
+        "issue": random.choice(["bad taste", "low pressure", "leakage", "no water"]),
+        "step_count": 0,
+        "last_action": None
+    }
+
+    rewards = []
+    action_history = []
+    reward_memory = {}
+    total_cost = 0
+
+    for step_num in range(1, 7):
+        action = rule_based_action(state["issue"], action_history)
+        if action:
+            reason = "Rule-based decision"
+        else:
+            action, reason = get_best_action(state, action_history, reward_memory)
+
+        action = avoid_bad_actions(action, reward_memory)
+        action_history.append(action)
+        cost = cost_map.get(action, 0)
+        total_cost += cost
+
+        # Step reward & done
+        reward = 1.0 if action != "check_filter" else 0.5
+        rewards.append(reward)
+        reward_memory[action] = reward
+
+        state["last_action"] = action
+        state["step_count"] += 1
+        done = state["step_count"] >= 6 or reward >= 5 or total_cost > 2000
+
+        log_step(step_num, action, reward, done, reason, cost)
+        if done:
+            break
+
+    success = sum(rewards) > 1.0
+    log_end(success, step_num, rewards, total_cost)
+
+    return {
+        "state": state,
+        "rewards": rewards,
+        "total_cost": total_cost,
+        "steps": step_num,
+        "action_history": action_history
+    }
 
 @app.get("/")
 async def home():
