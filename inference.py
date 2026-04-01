@@ -1,22 +1,26 @@
+# inference.py
+from fastapi import FastAPI, Request
+from pydantic import BaseModel
+import random
 import os
-from openai import OpenAI
-import requests
 import time
 
-# =========================
-# CONFIG
-# =========================
-API_KEY = os.getenv("HF_TOKEN")
-API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
+# Optional: Uncomment if you want LLM fallback
+# from openai import OpenAI
 
-ENV_URL = "http://localhost:8000"
+app = FastAPI(title="RO Support OpenEnv + Planner")
 
-client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+# -----------------------
+# Internal Env State
+# -----------------------
+class ROAction(BaseModel):
+    action: str
 
-# =========================
-# COST MAP 💰
-# =========================
+state = {"issue": None, "step_count": 0, "last_action": None}
+
+# -----------------------
+# Cost Map & Valid Actions
+# -----------------------
 cost_map = {
     "check_filter": 0,
     "replace_filter": 500,
@@ -29,11 +33,11 @@ cost_map = {
 
 valid_actions = list(cost_map.keys())
 
-# =========================
-# LOGGING
-# =========================
+# -----------------------
+# Logging
+# -----------------------
 def log_start(task):
-    print(f"[START] task={task} env=ro_support_env model={MODEL_NAME}")
+    print(f"[START] task={task} issue={state['issue']}")
 
 def log_step(step, action, reward, done, reason, cost):
     print(f"[STEP] step={step} action={action} reward={reward:.2f} cost={cost} done={str(done).lower()} reason={reason}")
@@ -42,30 +46,31 @@ def log_end(success, steps, rewards, total_cost):
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
     print(f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str} total_cost={total_cost}")
 
-# =========================
-# 🏆 FINAL RULE-BASED SYSTEM
-# =========================
+# -----------------------
+# Rule-Based Actions
+# -----------------------
 def rule_based_action(issue, action_history):
-
     if issue == "bad taste":
         return "replace_filter"
-
     if issue == "low pressure":
         return "check_filter"
-
     if issue == "leakage":
         return "fix_leak"
-
     if issue == "no water":
         if "check_power" not in action_history:
             return "check_power"
         return "check_filter"
-
     return None
 
-# =========================
-# 🧠 LLM (Fallback only)
-# =========================
+# -----------------------
+# LLM Planner (Optional)
+# -----------------------
+# Uncomment if you want OpenAI fallback
+"""
+API_KEY = os.getenv("HF_TOKEN")
+MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
+client = OpenAI(api_key=API_KEY)
+
 def get_best_action(state, action_history, reward_memory):
     for _ in range(2):
         try:
@@ -73,7 +78,7 @@ def get_best_action(state, action_history, reward_memory):
                 model=MODEL_NAME,
                 messages=[{
                     "role": "user",
-                    "content": f"""
+                    "content": f\"\"\"
 Customer issue: {state['issue']}
 Previous actions: {action_history}
 
@@ -83,13 +88,12 @@ Choose best action from:
 Format:
 action: <action>
 reason: <short reason>
-"""
+\"\"\"
                 }],
                 max_tokens=80
             )
 
             reply = response.choices[0].message.content.lower()
-
             action_line = [l for l in reply.split("\n") if "action:" in l][0]
             reason_line = [l for l in reply.split("\n") if "reason:" in l][0]
 
@@ -103,98 +107,73 @@ reason: <short reason>
             time.sleep(1)
 
     return "check_filter", "fallback"
+"""
 
-# =========================
-# ❌ AVOID BAD ACTIONS
-# =========================
+# -----------------------
+# Avoid Bad Actions
+# -----------------------
 def avoid_bad_actions(action, reward_memory):
     if action in reward_memory and reward_memory[action] < 0:
         return "check_filter"
     return action
 
-# =========================
-# MAIN TASK
-# =========================
-def run_task(task):
-    log_start(task)
+# -----------------------
+# Environment API
+# -----------------------
+@app.post("/reset")
+async def reset():
+    global state
+    state = {
+        "issue": random.choice(["bad taste", "low pressure", "leakage", "no water"]),
+        "step_count": 0,
+        "last_action": None
+    }
+    return {"status": "ok", "state": state}
 
-    res = requests.post(f"{ENV_URL}/reset", params={"task": task})
-    state = res.json()["state"]
+@app.post("/step")
+async def step(action: ROAction):
+    global state
+    state["step_count"] += 1
 
-    print(f"[START] task={task} issue={state['issue']}")
-
-    rewards = []
-    action_history = []
+    # Initialize logs and memory
+    action_history = [state.get("last_action")] if state.get("last_action") else []
     reward_memory = {}
-    total_cost = 0
 
-    for step in range(1, 7):
+    # -----------------------
+    # Rule-based first
+    # -----------------------
+    chosen_action = rule_based_action(state["issue"], action_history)
+    if chosen_action:
+        reason = "Rule-based decision"
+    else:
+        # Uncomment below for LLM fallback
+        # chosen_action, reason = get_best_action(state, action_history, reward_memory)
+        chosen_action = action.action
+        reason = "Fallback / user action"
 
-        # =========================
-        # 🔥 RULE FIRST (FAST WIN)
-        # =========================
-        action = rule_based_action(state["issue"], action_history)
+    # Avoid bad actions
+    chosen_action = avoid_bad_actions(chosen_action, reward_memory)
 
-        if action:
-            reason = "Rule-based optimized decision"
-        else:
-            print("[PLANNER] Using AI planning")
-            action, reason = get_best_action(state, action_history, reward_memory)
+    state["last_action"] = chosen_action
 
-        # =========================
-        # ❌ AVOID BAD ACTIONS
-        # =========================
-        action = avoid_bad_actions(action, reward_memory)
+    # Reward calculation (example)
+    reward = 1.0 if chosen_action != "check_filter" else 0.5
+    reward_memory[chosen_action] = reward
+    cost = cost_map.get(chosen_action, 0)
+    done = state["step_count"] >= 6
 
-        action_history.append(action)
+    # Logging
+    log_step(state["step_count"], chosen_action, reward, done, reason, cost)
 
-        # Cost 💰
-        cost = cost_map.get(action, 0)
-        total_cost += cost
+    return {"state": state, "reward": reward, "done": done, "info": {}}
 
-        # =========================
-        # ENV STEP
-        # =========================
-        step_res = requests.post(
-            f"{ENV_URL}/step",
-            json={"action": action}
-        ).json()
+@app.get("/")
+async def home():
+    return {"message": "RO Support OpenEnv running!"}
 
-        reward = step_res["reward"]
-        done = step_res["done"]
-
-        rewards.append(reward)
-        reward_memory[action] = reward
-
-        # =========================
-        # LOGGING
-        # =========================
-        log_step(step, action, reward, done, reason, cost)
-        print(f"[THINKING] {reason}")
-
-        if "state" in step_res:
-            state = step_res["state"]
-
-        # =========================
-        # 🚀 HARD STOP (KEY WINNING LOGIC)
-        # =========================
-        if reward >= 5 or done or total_cost > 2000:
-            break
-
-    # =========================
-    # FINAL METRICS
-    # =========================
-    success = sum(rewards) > 1.0
-    efficiency = success / step
-    profit_score = max(0, 2000 - total_cost)
-
-    print(f"[KPI] efficiency={efficiency:.2f} profit_score={profit_score}")
-
-    log_end(success, step, rewards, total_cost)
-
-# =========================
-# RUN
-# =========================
+# -----------------------
+# Run locally
+# -----------------------
 if __name__ == "__main__":
-    for task in ["easy", "medium", "hard"]:
-        run_task(task)
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=7860)
