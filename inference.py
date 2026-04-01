@@ -5,7 +5,7 @@ import random
 import os
 import time
 
-# Optional: only if you want LLM fallback
+# Optional LLM fallback
 try:
     from openai import OpenAI
     API_KEY = os.getenv("HF_TOKEN")
@@ -102,7 +102,6 @@ reason: <short reason>
             )
 
             reply = response.choices[0].message.content.lower()
-
             action_line = [l for l in reply.split("\n") if "action:" in l][0]
             reason_line = [l for l in reply.split("\n") if "reason:" in l][0]
 
@@ -182,7 +181,6 @@ async def run_task(task: str):
         cost = cost_map.get(action, 0)
         total_cost += cost
 
-        # Step reward & done
         reward = 1.0 if action != "check_filter" else 0.5
         rewards.append(reward)
         reward_memory[action] = reward
