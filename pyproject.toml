@@ -16,8 +16,9 @@ dependencies = [
     "openenv-core>=0.2.0"
 ]
 
+# ✅ IMPORTANT: key MUST be "server"
 [project.scripts]
-start = "server.app:main"
+server = "server.app:main"
 
 [build-system]
 requires = ["setuptools", "wheel"]
