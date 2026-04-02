@@ -5,13 +5,18 @@ description = "AI agent for RO support using OpenEnv"
 authors = [
     { name = "Nihal Chaudhary" }
 ]
+
 dependencies = [
     "fastapi",
     "uvicorn",
     "pydantic",
     "requests",
-    "openai"
+    "openai",
+    "openenv-core>=0.2.0"
 ]
+
+[project.scripts]
+start = "server.app:app"
 
 [build-system]
 requires = ["setuptools", "wheel"]
