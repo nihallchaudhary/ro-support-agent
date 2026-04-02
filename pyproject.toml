@@ -1,0 +1,18 @@
+[project]
+name = "ro-support-agent"
+version = "0.1.0"
+description = "AI agent for RO support using OpenEnv"
+authors = [
+    { name = "Nihal Chaudhary" }
+]
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "requests",
+    "openai"
+]
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
