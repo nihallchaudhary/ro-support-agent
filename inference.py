@@ -4,14 +4,16 @@ from openai import OpenAI
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
-# ✅ Import your local environment (NO HTTP now)
 from app.env import ROEnv
 from app.models import ROAction
 
+# =========================
+# CONFIG (REQUIRED BY CHECKER)
+# =========================
 
-# =========================
-# CONFIG
-# =========================
+API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
+HF_TOKEN = os.getenv("HF_TOKEN")
 
 app = FastAPI()
 
@@ -19,19 +21,54 @@ app = FastAPI()
 def home():
     return "<h1>🚀 RO Support API is Live</h1>"
 
-MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
-
 client = OpenAI(
-    base_url=os.getenv("API_BASE_URL"),
-    api_key=os.getenv("OPENAI_API_KEY")
+    base_url=API_BASE_URL,
+    api_key=HF_TOKEN
 )
 
-# ✅ Create environment instance
 env = ROEnv()
+
+# =========================
+# REQUIRED ENDPOINTS
+# =========================
+
+@app.post("/reset")
+def reset(task: str = "easy"):
+    env.set_task(task)
+    obs = env.reset()
+
+    return {
+        "state": {
+            "issue": obs.customer_query,
+            "history": [],
+            "step": 0
+        }
+    }
+
+
+@app.post("/step")
+def step(action: dict):
+    act = ROAction(
+        reply=action.get("reply", "auto"),
+        issue_label=action.get("issue_label", ""),
+        book_service=action.get("book_service", False)
+    )
+
+    result = env.step(act)
+
+    return {
+        "reward": result.reward,
+        "done": result.done,
+        "state": {
+            "issue": result.observation.customer_query,
+            "history": result.observation.conversation_history,
+            "step": result.observation.step_count
+        }
+    }
 
 
 # =========================
-# COST MAP 💰
+# COST MAP
 # =========================
 cost_map = {
     "check_filter": 0,
@@ -47,34 +84,20 @@ valid_actions = list(cost_map.keys())
 
 
 # =========================
-# LOGGING
-# =========================
-def log_start(task):
-    print(f"[START] task={task} env=ro_support_env model={MODEL_NAME}")
-
-def log_step(step, action, reward, done, reason, cost):
-    print(f"[STEP] step={step} action={action} reward={reward:.2f} cost={cost} done={str(done).lower()} reason={reason}")
-
-def log_end(success, steps, rewards, total_cost):
-    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
-    print(f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str} total_cost={total_cost}")
-
-
-# =========================
-# 🏆 RULE-BASED SYSTEM
+# RULE-BASED SYSTEM
 # =========================
 def rule_based_action(issue, action_history):
 
-    if "bad taste" in issue:
+    if "bad taste" in issue.lower():
         return "replace_filter"
 
-    if "low pressure" in issue:
+    if "low pressure" in issue.lower():
         return "check_filter"
 
-    if "leak" in issue:
+    if "leak" in issue.lower():
         return "fix_leak"
 
-    if "no water" in issue:
+    if "no water" in issue.lower():
         if "check_power" not in action_history:
             return "check_power"
         return "check_filter"
@@ -83,7 +106,7 @@ def rule_based_action(issue, action_history):
 
 
 # =========================
-# 🧠 LLM (Fallback only)
+# LLM FALLBACK
 # =========================
 def get_best_action(state, action_history, reward_memory):
     for _ in range(2):
@@ -120,91 +143,3 @@ reason: <short reason>
             time.sleep(1)
 
     return "check_filter", "fallback"
-
-
-# =========================
-# ❌ AVOID BAD ACTIONS
-# =========================
-def avoid_bad_actions(action, reward_memory):
-    if action in reward_memory and reward_memory[action] < 0:
-        return "check_filter"
-    return action
-
-
-# =========================
-# MAIN TASK (NOW LOCAL ENV)
-# =========================
-def run_task(task):
-    log_start(task)
-
-    # ✅ Reset env directly (NO HTTP)
-    env.set_task(task)
-    obs = env.reset()
-
-    state = {
-        "issue": obs.customer_query.lower()
-    }
-
-    print(f"[START] task={task} issue={state['issue']}")
-
-    rewards = []
-    action_history = []
-    reward_memory = {}
-    total_cost = 0
-
-    for step in range(1, 7):
-
-        # RULE FIRST
-        action = rule_based_action(state["issue"], action_history)
-
-        if action:
-            reason = "Rule-based optimized decision"
-        else:
-            print("[PLANNER] Using AI planning")
-            action, reason = get_best_action(state, action_history, reward_memory)
-
-        action = avoid_bad_actions(action, reward_memory)
-
-        action_history.append(action)
-
-        cost = cost_map.get(action, 0)
-        total_cost += cost
-
-        # ✅ STEP using local env
-        step_res = env.step(ROAction(
-            reply="auto-generated reply",
-            issue_label=action,
-            book_service=False
-        ))
-
-        reward = step_res.reward
-        done = step_res.done
-
-        rewards.append(reward)
-        reward_memory[action] = reward
-
-        log_step(step, action, reward, done, reason, cost)
-        print(f"[THINKING] {reason}")
-
-        state = {
-            "issue": step_res.observation.customer_query.lower()
-        }
-
-        if reward >= 5 or done or total_cost > 2000:
-            break
-
-    success = sum(rewards) > 1.0
-    efficiency = success / step
-    profit_score = max(0, 2000 - total_cost)
-
-    print(f"[KPI] efficiency={efficiency:.2f} profit_score={profit_score}")
-
-    log_end(success, step, rewards, total_cost)
-
-
-# =========================
-# RUN
-# =========================
-if __name__ == "__main__":
-    for task in ["easy", "medium", "hard"]:
-        run_task(task)
