@@ -5,15 +5,15 @@ from app.env import ROEnv
 from app.models import ROAction
 
 # =========================
-# CONFIG
+# CONFIG (STRICT OpenEnv)
 # =========================
-API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
-HF_TOKEN = os.getenv("HF_TOKEN")
+API_BASE_URL = os.environ["API_BASE_URL"]
+API_KEY = os.environ["API_KEY"]
+MODEL_NAME = os.environ.get("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
 
 client = OpenAI(
     base_url=API_BASE_URL,
-    api_key=HF_TOKEN
+    api_key=API_KEY
 )
 
 random.seed(42)
@@ -46,16 +46,17 @@ def llm_decide(issue):
     try:
         response = client.chat.completions.create(
             model=MODEL_NAME,
-            messages=[{
-                "role": "user",
-                "content": f"""
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"""
 Classify this issue into one of:
 pump_issue, filter_issue, multi_issue
-
 Issue: {issue}
 Answer only label.
 """
-            }],
+                }
+            ],
             max_tokens=10
         )
 
@@ -65,7 +66,7 @@ Answer only label.
             if a in ans:
                 return a
 
-    except:
+    except Exception:
         pass
 
     return random.choice(ACTIONS)
