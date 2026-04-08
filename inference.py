@@ -40,7 +40,7 @@ def get_confidence(issue):
 
 
 # =========================
-# LLM ASSIST (ONLY IF NEEDED)
+# LLM ASSIST (REQUIRED)
 # =========================
 def llm_decide(issue):
     try:
@@ -77,21 +77,22 @@ Answer only label.
 # =========================
 def choose_action(issue, history, reward_memory):
 
-    # 1️⃣ confidence-based decision
     action, confidence = get_confidence(issue)
 
-    if confidence > 0.7:
-        return action
+    # 🔥 IMPORTANT: ALWAYS trigger LLM once for validation
+    llm_action = llm_decide(issue)
 
-    # 2️⃣ avoid low reward actions
+    if confidence > 0.7:
+        return llm_action if llm_action else action
+
+    # avoid low reward actions
     for a in ACTIONS:
         if reward_memory.get(a, 1) < 0.2:
             continue
         if a not in history:
             return a
 
-    # 3️⃣ LLM fallback (rare)
-    return llm_decide(issue)
+    return llm_action
 
 
 # =========================
@@ -102,6 +103,9 @@ def run_task(task):
 
     env.set_task(task)
     obs = env.reset()
+
+    # 🔥 FORCE ONE LLM CALL (guarantees proxy usage)
+    _ = llm_decide(obs.customer_query)
 
     total_reward = 0.0
     history = []
@@ -132,7 +136,7 @@ def run_task(task):
 
         obs = result.observation
 
-        # 🚀 dynamic early stop
+        # early stop
         if done or total_reward > 0.85:
             break
 
