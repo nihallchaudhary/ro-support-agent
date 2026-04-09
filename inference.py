@@ -98,7 +98,6 @@ def choose_action(issue, history, reward_memory):
 # SCORE NORMALIZATION
 # =========================
 def normalize_score(score):
-    # Ensure strictly between (0,1)
     if score <= 0.0:
         return 0.01
     if score >= 1.0:
@@ -121,6 +120,7 @@ def run_task(task):
     total_reward = 0.0
     history = []
     reward_memory = {}
+    steps_taken = 0   # ✅ NEW
 
     for step in range(1, 6):
 
@@ -142,6 +142,7 @@ def run_task(task):
         total_reward += reward
         history.append(action_label)
         reward_memory[action_label] = reward
+        steps_taken += 1   # ✅ NEW
 
         print(f"[STEP] step={step} action={action_label} reward={reward:.2f} done={str(done).lower()}")
 
@@ -150,8 +151,8 @@ def run_task(task):
         if done or total_reward > 0.85:
             break
 
-    # 🔥 FIX: normalize score
-    final_score = normalize_score(total_reward)
+    # ✅ FINAL FIX (MOST IMPORTANT LINE)
+    final_score = normalize_score(total_reward / steps_taken)
 
     success = final_score > 0.6
 
