@@ -3,6 +3,7 @@ import random
 from openai import OpenAI
 from app.env import ROEnv
 from app.models import ROAction
+from app.graders import grade_hard   # ✅ import, don't redefine
 
 # 🔧 API CONFIG
 API_BASE_URL = os.environ["API_BASE_URL"]
@@ -76,19 +77,18 @@ def choose_action(issue):
     return random.choice(ACTIONS)
 
 
-# ✅ MAIN FUNCTION (platform entry point)
-def run_task(task):
-    env.set_task(task)
+# ✅ MAIN TASK RUNNER
+def run_task(task_name):
+    print(f"[START] task={task_name}", flush=True)
+
+    env.set_task(task_name)
     obs = env.reset()
 
     issue = obs.customer_query
-
     action_label = choose_action(issue)
 
-    # smarter booking decision
-    book_service = True if action_label in ["multi_issue", "pump_issue"] else False
+    book_service = action_label in ["multi_issue", "pump_issue"]
 
-    # better response (helps LLM criteria)
     reply = (
         "Based on your issue, it seems there might be a problem with your RO system. "
         "Our technician can inspect and resolve it efficiently. "
@@ -101,11 +101,17 @@ def run_task(task):
         book_service=book_service
     )
 
-    return action
+    # ✅ STEP
+    step = 1
+    reward = grade_hard(action)
+
+    print(f"[STEP] step={step} reward={reward}", flush=True)
+
+    # ✅ END
+    print(f"[END] task={task_name} score={reward} steps={step}", flush=True)
 
 
-# ✅ LOCAL TEST
+# ✅ ENTRY POINT
 if __name__ == "__main__":
     for task in ["easy", "medium", "hard"]:
-        action = run_task(task)
-        print(task, action)
+        run_task(task)
