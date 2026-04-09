@@ -47,17 +47,21 @@ def step():
 
     state["steps"] += 1
 
+    # ✅ FIXED REWARD SYSTEM (STRICTLY BETWEEN 0 AND 1)
     if action == correct_action:
-        reward = 5
+        reward = 0.6
         msg = "Correct action"
     else:
-        reward = -2
+        reward = 0.3
         msg = f"Wrong action. Expected: {correct_action}"
 
     done = state["steps"] >= len(state["solution_path"])
 
     if done:
-        reward += 10
+        reward += 0.2  # max = 0.8
+
+    # ✅ FINAL SAFETY CLAMP
+    reward = max(0.01, min(0.99, reward))
 
     return jsonify({
         "reward": reward,
@@ -65,6 +69,7 @@ def step():
         "message": msg,
         "state": state
     })
+
 
 def save_customer(issue, actions):
     data = []
@@ -81,6 +86,7 @@ def save_customer(issue, actions):
 
     with open("database.json", "w") as f:
         json.dump(data, f, indent=2)
+
 
 if __name__ == "__main__":
     app.run(port=8000)
