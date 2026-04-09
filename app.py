@@ -47,7 +47,7 @@ def step():
 
     state["steps"] += 1
 
-    # ✅ FIXED REWARD SYSTEM (STRICTLY BETWEEN 0 AND 1)
+    # ✅ FIXED reward (strictly between 0 and 1)
     if action == correct_action:
         reward = 0.6
         msg = "Correct action"
@@ -60,7 +60,7 @@ def step():
     if done:
         reward += 0.2  # max = 0.8
 
-    # ✅ FINAL SAFETY CLAMP
+    # ✅ FINAL SAFETY
     reward = max(0.01, min(0.99, reward))
 
     return jsonify({
