@@ -4,6 +4,7 @@ from openai import OpenAI
 from app.env import ROEnv
 from app.models import ROAction
 
+# 🔧 API CONFIG
 API_BASE_URL = os.environ["API_BASE_URL"]
 API_KEY = os.environ["API_KEY"]
 MODEL_NAME = os.environ.get("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
@@ -16,6 +17,7 @@ env = ROEnv()
 ACTIONS = ["pump_issue", "filter_issue", "multi_issue"]
 
 
+# ✅ Rule-based confidence
 def get_confidence(issue):
     issue = issue.lower()
 
@@ -25,12 +27,13 @@ def get_confidence(issue):
     if "taste" in issue:
         return "filter_issue", 0.9
 
-    if "noisy" in issue or "low" in issue:
+    if "noisy" in issue or "low pressure" in issue:
         return "multi_issue", 0.85
 
     return None, 0.3
 
 
+# ✅ LLM classification
 def llm_decide(issue):
     try:
         response = client.chat.completions.create(
@@ -56,88 +59,53 @@ Answer only label.
     except Exception:
         pass
 
-    return random.choice(ACTIONS)
+    return None
 
 
-def choose_action(issue, history, reward_memory):
-    action, confidence = get_confidence(issue)
+# ✅ Decision logic
+def choose_action(issue):
+    rule_action, confidence = get_confidence(issue)
     llm_action = llm_decide(issue)
 
     if confidence > 0.7:
-        return llm_action if llm_action else action
+        return llm_action if llm_action else rule_action
 
-    for a in ACTIONS:
-        if reward_memory.get(a, 1) < 0.2:
-            continue
-        if a not in history:
-            return a
+    if llm_action:
+        return llm_action
 
-    return llm_action
+    return random.choice(ACTIONS)
 
 
-def normalize_score(score):
-    if score <= 0.0:
-        return 0.01
-    if score >= 1.0:
-        return 0.99
-    return score
-
-
+# ✅ MAIN FUNCTION (platform entry point)
 def run_task(task):
-    print(f"[START] task={task}")
-
     env.set_task(task)
     obs = env.reset()
 
-    _ = llm_decide(obs.customer_query)
+    issue = obs.customer_query
 
-    total_reward = 0.0
-    history = []
-    reward_memory = {}
-    steps_taken = 0
+    action_label = choose_action(issue)
 
-    for step in range(1, 6):
-        issue = obs.customer_query
+    # smarter booking decision
+    book_service = True if action_label in ["multi_issue", "pump_issue"] else False
 
-        action_label = choose_action(issue, history, reward_memory)
+    # better response (helps LLM criteria)
+    reply = (
+        "Based on your issue, it seems there might be a problem with your RO system. "
+        "Our technician can inspect and resolve it efficiently. "
+        "Would you like to schedule a service visit?"
+    )
 
-        action = ROAction(
-            reply="Providing accurate diagnosis and ensuring efficient resolution with service support",
-            issue_label=action_label,
-            book_service=True
-        )
+    action = ROAction(
+        reply=reply,
+        issue_label=action_label,
+        book_service=book_service
+    )
 
-        result = env.step(action)
-
-        reward = result.reward
-        done = result.done
-
-        total_reward += reward
-        history.append(action_label)
-        reward_memory[action_label] = reward
-        steps_taken += 1
-
-        print(f"[STEP] step={step} action={action_label} reward={reward:.2f} done={str(done).lower()}")
-
-        obs = result.observation
-
-        if done or total_reward > 0.85:
-            break
-
-    final_score = normalize_score(total_reward / steps_taken)
-
-    success = final_score > 0.6
-
-    print(f"[END] success={str(success).lower()} total_reward={final_score:.2f}")
-
-    return final_score  # ✅ CRITICAL FIX
+    return action
 
 
+# ✅ LOCAL TEST
 if __name__ == "__main__":
-    results = {}
-
     for task in ["easy", "medium", "hard"]:
-        score = run_task(task)
-        results[task] = score
-
-    print(results)
+        action = run_task(task)
+        print(task, action)
