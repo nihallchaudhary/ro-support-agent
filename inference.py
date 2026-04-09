@@ -4,26 +4,18 @@ from openai import OpenAI
 from app.env import ROEnv
 from app.models import ROAction
 
-# =========================
-# CONFIG (STRICT OpenEnv)
-# =========================
 API_BASE_URL = os.environ["API_BASE_URL"]
 API_KEY = os.environ["API_KEY"]
 MODEL_NAME = os.environ.get("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
 
-client = OpenAI(
-    base_url=API_BASE_URL,
-    api_key=API_KEY
-)
+client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
 random.seed(42)
 env = ROEnv()
 
 ACTIONS = ["pump_issue", "filter_issue", "multi_issue"]
 
-# =========================
-# CONFIDENCE SCORING
-# =========================
+
 def get_confidence(issue):
     issue = issue.lower()
 
@@ -39,24 +31,19 @@ def get_confidence(issue):
     return None, 0.3
 
 
-# =========================
-# LLM ASSIST
-# =========================
 def llm_decide(issue):
     try:
         response = client.chat.completions.create(
             model=MODEL_NAME,
-            messages=[
-                {
-                    "role": "user",
-                    "content": f"""
+            messages=[{
+                "role": "user",
+                "content": f"""
 Classify this issue into one of:
 pump_issue, filter_issue, multi_issue
 Issue: {issue}
 Answer only label.
 """
-                }
-            ],
+            }],
             max_tokens=10
         )
 
@@ -72,14 +59,8 @@ Answer only label.
     return random.choice(ACTIONS)
 
 
-# =========================
-# ACTION SELECTOR
-# =========================
 def choose_action(issue, history, reward_memory):
-
     action, confidence = get_confidence(issue)
-
-    # 🔥 Always call LLM (validation requirement)
     llm_action = llm_decide(issue)
 
     if confidence > 0.7:
@@ -94,9 +75,6 @@ def choose_action(issue, history, reward_memory):
     return llm_action
 
 
-# =========================
-# SCORE NORMALIZATION
-# =========================
 def normalize_score(score):
     if score <= 0.0:
         return 0.01
@@ -105,25 +83,20 @@ def normalize_score(score):
     return score
 
 
-# =========================
-# RUN TASK
-# =========================
 def run_task(task):
     print(f"[START] task={task}")
 
     env.set_task(task)
     obs = env.reset()
 
-    # 🔥 Ensure at least one LLM call
     _ = llm_decide(obs.customer_query)
 
     total_reward = 0.0
     history = []
     reward_memory = {}
-    steps_taken = 0   # ✅ NEW
+    steps_taken = 0
 
     for step in range(1, 6):
-
         issue = obs.customer_query
 
         action_label = choose_action(issue, history, reward_memory)
@@ -142,7 +115,7 @@ def run_task(task):
         total_reward += reward
         history.append(action_label)
         reward_memory[action_label] = reward
-        steps_taken += 1   # ✅ NEW
+        steps_taken += 1
 
         print(f"[STEP] step={step} action={action_label} reward={reward:.2f} done={str(done).lower()}")
 
@@ -151,17 +124,20 @@ def run_task(task):
         if done or total_reward > 0.85:
             break
 
-    # ✅ FINAL FIX (MOST IMPORTANT LINE)
     final_score = normalize_score(total_reward / steps_taken)
 
     success = final_score > 0.6
 
     print(f"[END] success={str(success).lower()} total_reward={final_score:.2f}")
 
+    return final_score  # ✅ CRITICAL FIX
 
-# =========================
-# MAIN
-# =========================
+
 if __name__ == "__main__":
+    results = {}
+
     for task in ["easy", "medium", "hard"]:
-        run_task(task)
+        score = run_task(task)
+        results[task] = score
+
+    print(results)
